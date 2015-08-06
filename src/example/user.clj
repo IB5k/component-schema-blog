@@ -1,11 +1,13 @@
 (ns example.user
   (:require [com.stuartsierra.component :as component]
             [datomic.api :as d]
-            [schema.core :as s])
+            [schema.core :as s]
+            [ib5k.component.ctr :as ctr])
   (:import [datomic.peer Connection]))
 
 (s/defschema DBSchema
-  {:connection datomic.peer.Connection})
+  {:uri s/Str
+   :connection datomic.peer.Connection})
 
 (s/defn get-user :- {:db/id s/Num
                      :user/username s/Str
@@ -30,17 +32,22 @@
                                        :user/favorite-color favorite-color}]))
 
 (s/defrecord ExampleComponent
-    [options :- {}
-     cache :- clojure.lang.IAtom
+    [admin-name :- s/Str
+     cache :- clojure.lang.Atom
      database :- DBSchema]
   component/Lifecycle
   (start [this]
+    (ctr/validate-class this)
     (println ";; Starting ExampleComponent")
-    (assoc this :admin (get-user database "admin")))
+    (assoc this :admin (get-user database admin-name)))
   (stop [this]
     (println ";; Stopping ExampleComponent")
     this))
 
-(defn example-component [config-options]
-  (map->ExampleComponent {:options config-options
-                          :cache (atom {})}))
+(def example-component
+  (-> map->ExampleComponent
+      (ctr/wrap-class-validation ExampleComponent)
+      (ctr/wrap-using [:database])
+      (ctr/wrap-defaults {:admin-name "admin"
+                          :cache (atom {})})
+      (ctr/wrap-kargs)))

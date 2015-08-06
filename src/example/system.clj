@@ -6,10 +6,10 @@
 (defn example-system [config-options]
   (let [{:keys [uri]} config-options]
     (component/system-map
-      :db (new-database uri)
+      :db (new-database :uri uri)
       :app (component/using
-             (example-component config-options)
-             {:database  :db}))))
+             (example-component)
+             {:database :db}))))
 
 (defn new-system
   []

@@ -2,15 +2,15 @@
 
 If you’re not already familiar with Stuart Sierra’s excellent [component](https://github.com/stuartsierra/component) library, you’re missing out on a powerful system abstraction for runtime dependency management. By compartmentalizing code into components, we can make relationships between different parts of code explicit. While this is great, it can be unclear exactly what function a dependency provides, and components must often know too much about their dependencies.
 
+Prismatic’s [schema](https://github.com/Prismatic/schema) library provides utilities for validating the shape of data structures at runtime.
+
+In the case of component systems, we can use schemas to both document and validate systems at various points in their lifecycle. [Component Schema](https://github.com/IB5k/component-schema) provides tools for integrating schema into component systems. In this post, we'll walk through some of the rationale, implementation, and benefits.
+
 A complete repo of the code in this post is [available here](https://github.com/IB5k/component-schema-blog).
 
-# Prismatic Schema
+Let's modify the database example from [component](https://github.com/stuartsierra/component#user-content-creating-components) to connect to a [Datomic](http://www.datomic.com/) database.
 
-Prismatic’s [schema](https://github.com/Prismatic/schema) library provides utilities for validating the shape of data structures at runtime. 
-
-In the case of component systems, we can use schemas to both document and validate systems at various points in their lifecycle. 
-
-Let's modify the database example from [component](https://github.com/stuartsierra/component#user-content-creating-components) to connect to a [Datomic](http://www.datomic.com/) database
+# Example System
 
 ```clojure
 ;; example/database.clj
@@ -44,7 +44,7 @@ Let's modify the database example from [component](https://github.com/stuartsier
   (map->Database {:uri uri}))
 ```
 
-This is great. We can now use the database in another component. Following Stuart's examplem let's write functions to get and add users and use them to find the admin in another component. Let's ignore transacting initial database schema for now. 
+This is great. We can now use the database in another component. Following Stuart's examplem let's write functions to get and add users and use them to find the admin in another component. Let's ignore transacting initial database schema for now.
 
 ```clojure
 ;; example/user.clj
@@ -105,22 +105,24 @@ and our system
       :app (component/using
              (example-component config-options)
              {:database  :db}))))
+
+(defn new-system
+  []
+  (example-system {:uri "datomic:dev://localhost:4334/example"}))
 ```
 
-and let's try it in the repl
+and let's try it in the repl. Let's use [boot-component](https://github.com/IB5k/boot-component) to handled the [reloaded](https://github.com/stuartsierra/reloaded) workflow.
 
 ```clojure
+;; boot.user>
 (require '[datomic.api :as d])
 ;; create the database
 (def uri "datomic:dev://localhost:4334/example")
 (d/create-database uri)
 
-(require '[example.system :refer [example-system]])
-(require '[com.stuartsierra.component :as component])
-;; create the system
-(def system (example-system {:uri uri}))
-;; start the system
-(alter-var-root #'system component/start)
+(in-ns 'boot-component.reloaded)
+;; boot-component.reloaded>
+(reset)
 ;; Starting database
 ;; Opening database connection
 ;; Starting ExampleComponent
@@ -138,6 +140,9 @@ and let's try it in the repl
 Let's seed the database with a user
 
 ```clojure
+(in-ns 'boot.user)
+;; boot.user>
+(def conn (d/connect uri);
 (d/transact conn [{:db/id (d/tempid :db.part/db)
                    :db/ident :user/username
                    :db/valueType :db.type/string
@@ -164,7 +169,9 @@ Let's seed the database with a user
                    :user/username "admin"
                    :user/favorite-color :color/red}])
 
-(alter-var-root #'system component/start)
+(in-ns 'boot-component.reloaded)
+;; boot-component.reloaded>
+(reset)
 ;; Starting database
 ;; Opening database connection
 ;; Starting ExampleComponent
@@ -173,6 +180,8 @@ Let's seed the database with a user
 ```
 
 This all makes sense, but what happens if someone changes the Database component so that the connection is stored differently?
+
+# Break the Code (who done it?)
 
 ```clojure
 ;; example/database.clj
@@ -199,9 +208,8 @@ This all makes sense, but what happens if someone changes the Database component
 Can you spot the change? The ```:connection``` is now ```conn```. If we try to run the code in our user namespace now, we'll get a NullPointerException inside ```get-user```.
 
 ```clojure
-;; boot.user =>
-(def system (example-system {:uri uri}))
-(alter-var-root #'system component/start)
+;; boot-component.reloaded>
+(reset)
 ;;=> Caused by java.lang.NullPointerException
 ;;   (No message)
 ;;                        api.clj:   60  datomic.api/db
@@ -243,6 +251,7 @@ Can you spot the change? The ```:connection``` is now ```conn```. If we try to r
 
 Is there a way that we can ensure that component provide data the way we expect? Yes! Let's use Prismatic schema.
 
+# Component Schema
 
 ```clojure
 ;; example/database.clj
@@ -278,7 +287,8 @@ Is there a way that we can ensure that component provide data the way we expect?
   (:import [datomic.peer Connection]))
 
 (s/defschema DBSchema
-  {:connection datomic.peer.Connection})
+  {:uri s/Str
+   :connection datomic.peer.Connection})
 
 (s/defn get-user :- {:db/id s/Num
                      :user/username s/Str
@@ -304,7 +314,7 @@ Is there a way that we can ensure that component provide data the way we expect?
 
 (s/defrecord ExampleComponent
     [options :- {}
-     cache :- clojure.lang.IAtom
+     cache :- clojure.lang.Atom
      database :- DBSchema]
   component/Lifecycle
   (start [this]
@@ -319,9 +329,143 @@ Is there a way that we can ensure that component provide data the way we expect?
                           :cache (atom {})}))
 ```
 
-That looks much clearer. But if you run the above code, you'll still get the same error. Why? Schemas are not validated at runtime by default. To force validation code, we could wrap the system start function. 
+That looks much clearer. But if you run the above code, you'll still get the same error. Why? Schemas are not validated at runtime by default. To force validation code, we could wrap the system start function.
 
 ```clojure
-(def system (example-system {:uri uri}))
+;; boot-component.reloaded>
+(require '[schema.core :as s])
 (s/with-fn-validation (alter-var-root #'system component/start))
+;; => Unhandled clojure.lang.ExceptionInfo
+;;    Caused by clojure.lang.ExceptionInfo
+;;    Input to get-user does not match schema: [(named {:conn
+;;    disallowed-key, :uri disallowed-key, :connection
+;;    missing-required-key} database) nil]
+;;    {:schema
+;;     [{:schema {:connection datomic.peer.Connection},
+;;       :optional? false,
+;;       :name database}
+;;      {:schema java.lang.String, :optional? false, :name username}],
+;;     :value
+;;     [{:uri "datomic:dev://localhost:4334/example",
+;;       :conn
+;;       #<Connection {:db-id "example-6b6565c3-ba0b-4013-84cc-4805f837643f", :index-rev 0, :basis-t 1002, :next-t 1003, :unsent-updates-queue 0, :pending-txes 0}>}
+;;      "admin"],
+;;     :type :schema.core/error,
+;;     :error
+;;     [(named {:conn disallowed-key, :uri disallowed-key, :connection missing-required-key} database)
+;;      nil]}
 ```
+
+Much better, but instead of waiting for a method call (which might happen after your system starts) to error, we want to know that our system is badly formed immediately. Fail fast, fail often! We can do this by progressively validating the contruction of our system before start.
+
+# Constructor Schema
+
+The first point of validation are arguments passed into a component when it is first constructed. In the case of our database, we have a single argument, ```uri :- s/Str```. Let's use the helper functions in [ib5k.component.ctr](https://github.com/IB5k/component-schema/blob/master/src/ib5k/component/ctr.cljc) to build a more robust constructor.
+
+```clojure
+;; example/database.clj
+(def new-database
+  (-> map->Database
+      ;; throw an error if the passed in arguments don't conform to the class schema
+      (ctr/wrap-class-validation Database)
+      ;; allow optional keyword arguments
+      (ctr/wrap-kargs)))
+```
+
+Let's also update our example component to take the name of the admin as an argument
+
+```clojure
+;; example/user.clj
+(s/defrecord ExampleComponent
+    [admin-name :- s/Str
+     cache :- clojure.lang.Atom
+     database :- DBSchema]
+  component/Lifecycle
+  (start [this]
+    (println ";; Starting ExampleComponent")
+    (assoc this :admin (get-user database admin-name)))
+  (stop [this]
+    (println ";; Stopping ExampleComponent")
+    this))
+
+(def example-component
+  (-> map->ExampleComponent
+      (ctr/wrap-class-validation ExampleComponent)
+      (ctr/wrap-using [:database])
+      (ctr/wrap-defaults {:admin-name "admin"
+                          :cache (atom {})})
+      (ctr/wrap-kargs)))
+```
+
+And our system file to call them correctly. Note that by wraping the constructors with ```wrap-kargs```, we can pass options to components either as maps or keyword arguments.
+
+```clojure
+;; example/system.clj
+(defn example-system [config-options]
+  (let [{:keys [uri]} config-options]
+    (component/system-map
+      :db (new-database :uri uri) ;; or (new-database {:uri uri})
+      :app (component/using
+             (example-component) ;; same as (example-component {})
+             {:database :db}))))
+```
+
+To check if things are working, try creating a system where the database uri isn't a string, you should get an error.
+
+```clojure
+;; example.system>
+(example-system {:uri :not-a-string})
+;;    Unhandled clojure.lang.ExceptionInfo
+;;    Value does not match schema: {:uri (not (instance? java.lang.String
+;;    :not-a-string))}
+;;    {:error {:uri (not (instance? java.lang.String :not-a-string))},
+;;     :value {:uri :not-a-string},
+;;     :schema {:uri java.lang.String},
+;;     :type :schema.core/error}
+
+```
+
+Very nice! When working in teams, it's becomes especially important to produce failures when systems are configured incorrectly. It's even better when the errors tell you exactly what's wrong!
+
+# Dependency Validation
+
+Since component dependencies are assoc'd into components before their start function is called, we can't validate them at construction time, but instead need a way to validate them when at the time the components are started. The easiest way is to place a validation call inside component start.
+
+```clojure
+(s/defrecord ExampleComponent
+    [admin-name :- s/Str
+     cache :- clojure.lang.Atom
+     database :- DBSchema]
+  component/Lifecycle
+  (start [this]
+    (ctr/validate-class this)
+    (println ";; Starting ExampleComponent")
+    (assoc this :admin (get-user database admin-name)))
+  (stop [this]
+    (println ";; Stopping ExampleComponent")
+    this))
+
+;; boot.component.reloaded>
+(reset)
+;;=>  Unhandled clojure.lang.ExceptionInfo
+;;    Caused by clojure.lang.ExceptionInfo
+;;    Value does not match schema: {:database {:conn disallowed-key,
+;;    :connection missing-required-key}}
+;;    {:error
+;;     {:database {:conn disallowed-key, :connection missing-required-key}},
+;;     :value
+;;     {:database
+;;      {:uri "datomic:dev://localhost:4334/example",
+;;       :conn
+;;       #<Connection {:db-id "example-090399a6-cadc-4177-ad07-f0ecc7cd33e4", :index-rev 0, :basis-t 63, :next-t 1000, :unsent-updates-queue 0, :pending-txes 0}>},
+;;      :cache #<Atom@2085bdb0: {}>,
+;;      :admin-name "admin"},
+;;     :schema
+;;     {:admin-name java.lang.String,
+;;      :cache clojure.lang.Atom,
+;;      :database
+;;      {:uri java.lang.String, :connection datomic.peer.Connection}},
+;;     :type :schema.core/error}
+```
+
+Finally we get the error we were looking for! Now we can clearly see what's wrong. The connection is named incorrectly!

@@ -1,7 +1,8 @@
 (ns example.database
   (:require [com.stuartsierra.component :as component]
             [datomic.api :as d]
-            [schema.core :as s])
+            [schema.core :as s]
+            [ib5k.component.ctr :as ctr])
   (:import [datomic.peer Connection]))
 
 (s/defrecord Database
@@ -10,14 +11,18 @@
   component/Lifecycle
   (start [component]
     (println ";; Starting database")
-    (let [conn (d/connect uri)]
-      (assoc component :conn conn)))
+    (if conn
+      component
+      (let [conn (d/connect uri)]
+       (assoc component :conn conn))))
   (stop [component]
     (println ";; Stopping database")
-    (d/release conn)
+    (when conn
+      (d/release conn))
     (d/shutdown false)
     (assoc component :conn nil)))
 
-(s/defn new-database
-  [uri :- s/Str]
-  (map->Database {:uri uri}))
+(def new-database
+  (-> map->Database
+      (ctr/wrap-class-validation Database)
+      (ctr/wrap-kargs)))
