@@ -1,0 +1,1 @@
+# component-schema-blog
