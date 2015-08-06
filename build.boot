@@ -23,4 +23,4 @@
    (repl :server true)
    (watch)
    (notify)
-   (reload-system :system-var 'example/new-system)))
+   (reload-system :system-var 'example.system/new-system)))

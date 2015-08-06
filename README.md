@@ -2,6 +2,8 @@
 
 If you’re not already familiar with Stuart Sierra’s excellent [component](https://github.com/stuartsierra/component) library, you’re missing out on a powerful system abstraction for runtime dependency management. By compartmentalizing code into components, we can make relationships between different parts of code explicit. While this is great, it can be unclear exactly what function a dependency provides, and components must often know too much about their dependencies.
 
+A complete repo of the code in this post is [available here](https://github.com/IB5k/component-schema-blog).
+
 # Prismatic Schema
 
 Prismatic’s [schema](https://github.com/Prismatic/schema) library provides utilities for validating the shape of data structures at runtime. 

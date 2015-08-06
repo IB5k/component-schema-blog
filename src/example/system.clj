@@ -10,3 +10,7 @@
       :app (component/using
              (example-component config-options)
              {:database  :db}))))
+
+(defn new-system
+  []
+  (example-system {:uri "datomic:dev://localhost:4334/example"}))
