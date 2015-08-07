@@ -550,3 +550,23 @@ Now in our example component, we can be more explicit about our database depende
     ;; [...]
   )
 ```
+
+The last thing we can do is go back to our system constructor, and use schema to define our dependencies.
+
+```clojure
+;; example/system.clj
+(defn example-system [config-options]
+  (let [{:keys [uri]} config-options]
+    (-> (component/system-map
+         :db (new-database :uri uri)
+         :app (example-component))
+        (component-schema/system-using-schema
+         {:app {:database (s/both (s/protocol DatomicConnection)
+                                  (s/protocol DatabaseReference))}}))))
+```
+
+Our system and components define their dependencies in terms of schema, and everything is validated on start! This allows individual developers a great deal more autonomy while developing in larger teams. A developer could be tasked with creating a component that satisfies a particular schema, and their choice of key names, implementation style, etc. is all isolated from the functioning of the system.
+
+In the next post we'll look at how to create larger, modular component systems that leverage protocols and schemas to create complex system wide behaviors where component logic is isolated to its internal workings.
+
+Source code for the resulting project is [available here](https://github.com/IB5k/component-schema-blog).
