@@ -1,13 +1,14 @@
 (ns example.database
   (:require [com.stuartsierra.component :as component]
             [datomic.api :as d]
-            [schema.core :as s]
-            [ib5k.component.ctr :as ctr])
-  (:import [datomic.peer Connection]))
+            [ib5k.component.ctr :as ctr]
+            [juxt.datomic.extras :refer (DatabaseReference DatomicConnection as-conn as-db)]
+            [schema.core :as s])
+  (:import [datomic Connection]))
 
 (s/defrecord Database
     [uri :- s/Str
-     conn :- (s/maybe Connection)]
+     conn :- (s/maybe datomic.Connection)]
   component/Lifecycle
   (start [component]
     (println ";; Starting database")
@@ -20,7 +21,14 @@
     (when conn
       (d/release conn))
     (d/shutdown false)
-    (assoc component :conn nil)))
+    (assoc component :conn nil))
+  DatomicConnection
+  (as-conn [this]
+    (:conn this))
+  DatabaseReference
+  (as-db [this]
+    ;; datomic.Connection implements DatabaseReference
+    (as-db (as-conn this))))
 
 (def new-database
   (-> map->Database

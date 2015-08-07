@@ -5,6 +5,7 @@
  :dependencies '[[com.stuartsierra/component "0.2.3"]
                  [com.datomic/datomic-free "0.9.5206"]
                  [org.clojure/clojure "1.8.0-alpha4"]
+                 [org.clojure/tools.logging "0.3.1"]
                  [ib5k/boot-component "0.1.2-SNAPSHOT"]
                  [ib5k/component-schema "0.1.3-SNAPSHOT"]
                  [jeluard/boot-notify "0.2.0"]
@@ -26,4 +27,5 @@
    (repl :server true)
    (watch)
    (notify)
-   (reload-system :system-var 'example.system/new-system)))
+   (reload-system :system-var 'example.system/new-system
+                  :start-var 'example.system/start)))

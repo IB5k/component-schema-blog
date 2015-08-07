@@ -56,12 +56,13 @@ This is great. We can now use the database in another component. Following Stuar
   [database username]
   (println ";; get-user" username)
   (let [db (d/db (:connection database))]
-    (->> (d/q '[:find ?e
-                :in $ ?username
-                :where
-                [?e :user/username ?username]]
-              db username)
-         (d/pull db '[*]))))
+    (some->> (d/q '[:find ?e
+                    :in $ ?username
+                    :where
+                    [?e :user/username ?username]]
+                  db username)
+             ffirst
+             (d/pull db '[*]))))
 
 (defn add-user
   [database username favorite-color]
@@ -142,7 +143,7 @@ Let's seed the database with a user
 ```clojure
 (in-ns 'boot.user)
 ;; boot.user>
-(def conn (d/connect uri);
+(def conn (d/connect uri))
 (d/transact conn [{:db/id (d/tempid :db.part/db)
                    :db/ident :user/username
                    :db/valueType :db.type/string
@@ -259,7 +260,7 @@ Is there a way that we can ensure that component provide data the way we expect?
   (:require [com.stuartsierra.component :as component]
             [datomic.api :as d]
             [schema.core :as s])
-  (:import [datomic.peer Connection]))
+  (:import [datomic Connection]))
 
 (s/defrecord Database
     [uri :- s/Str
@@ -284,25 +285,28 @@ Is there a way that we can ensure that component provide data the way we expect?
   (:require [com.stuartsierra.component :as component]
             [datomic.api :as d]
             [schema.core :as s])
-  (:import [datomic.peer Connection]))
+  (:import [datomic Connection]))
 
 (s/defschema DBSchema
   {:uri s/Str
-   :connection datomic.peer.Connection})
+   :connection datomic.Connection})
 
 (s/defn get-user :- {:db/id s/Num
                      :user/username s/Str
-                     :user/favorite-color s/Keyword}
+                     :user/favorite-color
+                     {:db/id s/Num
+                      :db/ident (s/enum :color/red :color/yellow :color/blue)}}
   [database :- DBSchema
    username :- s/Str]
   (println ";; get-user" username)
   (let [db (d/db (:connection database))]
-    (->> (d/q '[:find ?e
-                :in $ ?username
-                :where
-                [?e :user/username ?username]]
-              db username)
-         (d/pull db '[*]))))
+    (some->> (d/q '[:find ?e
+                    :in $ ?username
+                    :where
+                    [?e :user/username ?username]]
+                  db username)
+             ffirst
+             (d/pull db '[*]))))
 
 (s/defn add-user
   [database :- DBSchema
@@ -341,7 +345,7 @@ That looks much clearer. But if you run the above code, you'll still get the sam
 ;;    disallowed-key, :uri disallowed-key, :connection
 ;;    missing-required-key} database) nil]
 ;;    {:schema
-;;     [{:schema {:connection datomic.peer.Connection},
+;;     [{:schema {:connection datomic.Connection},
 ;;       :optional? false,
 ;;       :name database}
 ;;      {:schema java.lang.String, :optional? false, :name username}],
@@ -464,8 +468,85 @@ Since component dependencies are assoc'd into components before their start func
 ;;     {:admin-name java.lang.String,
 ;;      :cache clojure.lang.Atom,
 ;;      :database
-;;      {:uri java.lang.String, :connection datomic.peer.Connection}},
+;;      {:uri java.lang.String, :connection datomic.Connection}},
 ;;     :type :schema.core/error}
 ```
 
-Finally we get the error we were looking for! Now we can clearly see what's wrong. The connection is named incorrectly!
+Finally we get the error we were looking for! Now we can clearly see what's wrong. The connection is named incorrectly! Before we fix the error, let's decomplete component validation from the components themselves. Components shouldn't need to know that they're being validated, and having to remember to stick the validation call in Lifecycle is a pain. To do this, we're going to use [milesian.bigbang/expand](https://github.com/milesian/BigBang/blob/master/src/milesian/bigbang.clj#L4), a replacement for ```component/start``` that allows functions to be composed before and after start.
+
+```clojure
+;; example/system.clj
+(ns example.system
+  (:require [milesian.bigbang :refer [expand]]))
+;; [...]
+
+(defn start
+  [system]
+  (s/with-fn-validation ;;
+    (expand system {:before-start [[ctr/validate-class]]
+                    :after-start [[ctr/validate-class]]})))
+```
+
+We can now use this as our start function for our system. Using boot-component, we can set the ```reload-system``` task option ```:start-var 'example.system/start```. We also wrap the start function with-fn-validation force to validation of all functions in the system. All validation can be disabled at compile time for production using ```(s/set-compile-fn-validation! false)```. Trying it at the repl, we get the same error as before.
+
+Now let's go back and fix our bug. Instead of just renaming the connection back to what it should be, let's wrap it in a protocol to hide this kind of implementation detail and prevent future errors. Juxt's [datomic-extras](https://github.com/juxt/datomic-extras/) provides two protocols that we can extend to make our database component more substantially more flexible, ```DatomicConnection``` and ```DatabaseReference```.
+
+```clojure
+;; example/database.clj
+(ns example.database
+  (:require [com.stuartsierra.component :as component]
+            [datomic.api :as d]
+            [schema.core :as s]
+            [ib5k.component.ctr :as ctr]
+            [juxt.datomic.extras :refer (DatabaseReference DatomicConnection as-conn as-db)])
+  (:import [datomic Connection]))
+
+(s/defrecord Database
+    [uri :- s/Str
+     conn :- (s/maybe datomic.Connection)]
+  component/Lifecycle
+  (start [component]
+    (println ";; Starting database")
+    (if conn
+      component
+      (let [conn (d/connect uri)]
+       (assoc component :conn conn))))
+  (stop [component]
+    (println ";; Stopping database")
+    (when conn
+      (d/release conn))
+    (d/shutdown false)
+    (assoc component :conn nil))
+  DatomicConnection
+  (as-conn [this]
+    (:conn this))
+  DatabaseReference
+  (as-db [this]
+    ;; datomic.Connection implements DatabaseReference
+    (as-db (as-conn this))))
+```
+
+Now in our example component, we can be more explicit about our database dependency, without having to know about the way the component is implemented.
+
+```clojure
+(s/defn get-user
+  [database :- (s/protocol DatabaseReference)
+   username :- s/Str]
+  ;; [...]
+  )
+
+(s/defn add-user
+  [database :- (s/protocol DatomicConnection)
+   username :- s/Str
+   favorite-color :- s/Str]
+  ;; [...]
+  )
+
+(s/defrecord ExampleComponent
+    [admin-name :- s/Str
+     cache :- clojure.lang.Atom
+     database :- (s/both (s/protocol DatomicConnection)
+                         (s/protocol DatabaseReference))]
+    ;; [...]
+  )
+```
