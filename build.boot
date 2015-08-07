@@ -6,8 +6,11 @@
                  [com.datomic/datomic-free "0.9.5206"]
                  [org.clojure/clojure "1.8.0-alpha4"]
                  [ib5k/boot-component "0.1.2-SNAPSHOT"]
-                 [ib5k/component-schema "0.1.2-SNAPSHOT"]
+                 [ib5k/component-schema "0.1.3-SNAPSHOT"]
                  [jeluard/boot-notify "0.2.0"]
+                 [juxt/datomic-extras "1.0.3"
+                  :exclusions [com.datomic/datomic-free]]
+                 [milesian/bigbang "0.1.1"]
                  [prismatic/schema "0.4.3"]]
  :source-paths #{"src"}
  :resource-paths #(conj % "resources"))
