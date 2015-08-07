@@ -3,7 +3,7 @@
                                            :creds {:username (System/getenv "DATOMIC_USER")
                                                    :password (System/getenv "DATOMIC_PASS")}}])
  :dependencies '[[com.stuartsierra/component "0.2.3"]
-                 [com.datomic/datomic-free "0.9.5206"]
+                 [com.datomic/datomic-pro "0.9.5206"]
                  [org.clojure/clojure "1.8.0-alpha4"]
                  [org.clojure/tools.logging "0.3.1"]
                  [ib5k/boot-component "0.1.2-SNAPSHOT"]
@@ -21,7 +21,7 @@
  '[jeluard.boot-notify :refer :all])
 
 (deftask dev
-  "watch and compile cljx, css, cljs, init cljs-repl and push changes to browser"
+  "watch and compile"
   []
   (comp
    (repl :server true)
